@@ -7,6 +7,7 @@ namespace CodingAgentExplorer.Proxy;
 
 public class DynamicProxyConfigProvider(
     McpProxyConfig mcpConfig,
+    AnthropicProxyConfig anthropicConfig,
     IConfiguration configuration,
     ILogger<DynamicProxyConfigProvider> logger) : IProxyConfigProvider
 {
@@ -18,7 +19,7 @@ public class DynamicProxyConfigProvider(
 
     public IProxyConfig GetConfig()
     {
-        var anthropicDestination = ResolveAnthropicDestination(configuration, logger);
+        var anthropicDestination = ResolveAnthropicDestination(anthropicConfig, configuration, logger);
 
         var routes = new List<RouteConfig>
         {
@@ -78,15 +79,33 @@ public class DynamicProxyConfigProvider(
             });
         }
 
-        return new InMemoryProxyConfig(routes, clusters, mcpConfig.GetChangeToken());
+        // Combine both change tokens so YARP reloads when either MCP or Anthropic config changes
+        var combinedChangeToken = new CompositeChangeToken(new[]
+        {
+            mcpConfig.GetChangeToken(),
+            anthropicConfig.GetChangeToken()
+        });
+
+        return new InMemoryProxyConfig(routes, clusters, combinedChangeToken);
     }
 
     private static string ResolveAnthropicDestination(
+        AnthropicProxyConfig anthropicConfig,
         IConfiguration configuration,
         ILogger logger)
     {
-        // Allow env var override for convenience in local setups.
-        var configured = Environment.GetEnvironmentVariable("CODING_AGENT_EXPLORER_UPSTREAM_URL");
+        // Priority order:
+        // 1. Runtime config from AnthropicProxyConfig (set via web page)
+        // 2. Environment variable
+        // 3. appsettings.json
+        // 4. Default fallback
+
+        var configured = anthropicConfig.DestinationUrl;
+
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            configured = Environment.GetEnvironmentVariable("CODING_AGENT_EXPLORER_UPSTREAM_URL");
+        }
 
         if (string.IsNullOrWhiteSpace(configured))
         {
